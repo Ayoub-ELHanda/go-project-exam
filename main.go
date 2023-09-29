@@ -93,17 +93,17 @@ func main() {
 
 	user := "Dragon" // Initialize the user outside the loop
 
-	for {
-		var wg sync.WaitGroup
-		portChan := make(chan int)
+	//for {
+	var wg sync.WaitGroup
+	portChan := make(chan int)
 
-		for i := 0; i < workerCount; i++ {
-			wg.Add(1)
-			go checkPort(portChan, &wg, client, user)
-		}
-
-		portChan <- port
-		close(portChan)
-		wg.Wait()
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go checkPort(portChan, &wg, client, user)
 	}
+
+	portChan <- port
+	close(portChan)
+	wg.Wait()
+	//}
 }
