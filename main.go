@@ -12,15 +12,19 @@ import (
 	"time"
 )
 
-const workerCount = 100
+const workerCount = 1
+
+var port = 1208
 
 type UserRequest struct {
 	User   string      `json:"User"`
-	Secret interface{} `json:"Secret,omitempty"` // Allow for different data types for the Secret
+	Secret interface{} `json:"Secret,omitempty"`
 }
 
-func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user string, secret interface{}) {
+func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user string) string {
 	defer wg.Done()
+
+	var userSecretResponse string // Variable to store the /getUserSecret response
 
 	for port := range portChan {
 		address := "10.49.122.144:" + strconv.Itoa(port)
@@ -33,15 +37,16 @@ func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user 
 
 		baseURL := fmt.Sprintf("http://10.49.122.144:%d", port)
 
-		doPost := func(url string, body []byte) {
+		doPost := func(url string, body []byte) string {
 			resp, err := client.Post(url, "application/json", bytes.NewBuffer(body))
 			if err != nil {
 				fmt.Println("Post error:", err)
-				return
+				return ""
 			}
 			defer resp.Body.Close()
 			respBody, _ := ioutil.ReadAll(resp.Body)
 			fmt.Printf("Response from %s: %s\n", url, string(respBody))
+			return string(respBody)
 		}
 
 		signUpURL := baseURL + "/signup"
@@ -54,10 +59,14 @@ func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user 
 
 		getUserSecretURL := baseURL + "/getUserSecret"
 		getUserSecretBody, _ := json.Marshal(UserRequest{User: user})
-		doPost(getUserSecretURL, getUserSecretBody)
+		userSecretResponse = doPost(getUserSecretURL, getUserSecretBody)
+
+		if userSecretResponse != "Really don't feel like working today huh..." {
+			fmt.Printf("User secret: %s\n", userSecretResponse)
+		}
 
 		getUserLevelURL := baseURL + "/getUserLevel"
-		getUserLevelBody, _ := json.Marshal(UserRequest{User: user})
+		getUserLevelBody, _ := json.Marshal(UserRequest{User: user, Secret: userSecretResponse})
 		doPost(getUserLevelURL, getUserLevelBody)
 
 		getUserPointsURL := baseURL + "/getUserPoints"
@@ -65,9 +74,11 @@ func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user 
 		doPost(getUserPointsURL, getUserPointsBody)
 
 		hintURL := baseURL + "/iNeedAHint"
-		hintBody, _ := json.Marshal(UserRequest{User: user, Secret: secret}) // Pass the secret
+		hintBody, _ := json.Marshal(UserRequest{User: user})
 		doPost(hintURL, hintBody)
 	}
+
+	return userSecretResponse
 }
 
 func main() {
@@ -75,22 +86,18 @@ func main() {
 		Timeout: time.Second * 2,
 	}
 
-	user := "ayoub"
-	secret := "?" //
+	user := "Dragon" // Initialize the user outside the loop
 
 	for {
 		var wg sync.WaitGroup
-		portChan := make(chan int, workerCount)
+		portChan := make(chan int)
 
 		for i := 0; i < workerCount; i++ {
 			wg.Add(1)
-			go checkPort(portChan, &wg, client, user, secret)
+			go checkPort(portChan, &wg, client, user)
 		}
 
-		for port := 1; port <= 65535; port++ {
-			portChan <- port
-		}
-
+		portChan <- port
 		close(portChan)
 		wg.Wait()
 	}
