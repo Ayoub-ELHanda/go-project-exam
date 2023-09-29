@@ -8,23 +8,24 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 const workerCount = 1
 
-var port = 1208
+var port = 5174
 
 type UserRequest struct {
 	User   string      `json:"User"`
 	Secret interface{} `json:"Secret,omitempty"`
 }
 
-func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user string) string {
+func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user string) {
 	defer wg.Done()
 
-	var userSecretResponse string // Variable to store the /getUserSecret response
+	var secret string // Variable to store the user secret
 
 	for port := range portChan {
 		address := "10.49.122.144:" + strconv.Itoa(port)
@@ -57,28 +58,32 @@ func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user 
 		checkBody, _ := json.Marshal(UserRequest{User: user})
 		doPost(checkURL, checkBody)
 
-		getUserSecretURL := baseURL + "/getUserSecret"
-		getUserSecretBody, _ := json.Marshal(UserRequest{User: user})
-		userSecretResponse = doPost(getUserSecretURL, getUserSecretBody)
+		for i := 0; i < 15; i++ {
+			getUserSecretURL := baseURL + "/getUserSecret"
+			getUserSecretBody, _ := json.Marshal(UserRequest{User: user})
+			respString := doPost(getUserSecretURL, getUserSecretBody)
+			fmt.Printf("Iteration %d, Response from %s: %s\n", i, getUserSecretURL, respString) // Displaying the response
 
-		if userSecretResponse != "Really don't feel like working today huh..." {
-			fmt.Printf("User secret: %s\n", userSecretResponse)
+			if len(respString) > 45 {
+				secret = strings.TrimSpace(strings.Split(respString, ": ")[1]) // Extracting the secret
+				break                                                          // Exiting the loop once the secret is obtained
+			}
 		}
 
-		getUserLevelURL := baseURL + "/getUserLevel"
-		getUserLevelBody, _ := json.Marshal(UserRequest{User: user, Secret: userSecretResponse})
-		doPost(getUserLevelURL, getUserLevelBody)
+		if secret != "" {
+			getUserLevelURL := baseURL + "/getUserLevel"
+			getUserLevelBody, _ := json.Marshal(UserRequest{User: user, Secret: secret})
+			doPost(getUserLevelURL, getUserLevelBody)
 
-		getUserPointsURL := baseURL + "/getUserPoints"
-		getUserPointsBody, _ := json.Marshal(UserRequest{User: user})
-		doPost(getUserPointsURL, getUserPointsBody)
+			getUserPointsURL := baseURL + "/getUserPoints"
+			getUserPointsBody, _ := json.Marshal(UserRequest{User: user, Secret: secret})
+			doPost(getUserPointsURL, getUserPointsBody)
 
-		hintURL := baseURL + "/iNeedAHint"
-		hintBody, _ := json.Marshal(UserRequest{User: user})
-		doPost(hintURL, hintBody)
+			getHintURL := baseURL + "/iNeedAHint"
+			getHintBody, _ := json.Marshal(UserRequest{User: user, Secret: secret})
+			doPost(getHintURL, getHintBody)
+		}
 	}
-
-	return userSecretResponse
 }
 
 func main() {
