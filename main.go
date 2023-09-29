@@ -1,76 +1,97 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
 )
 
-var (
-	stopScanningMutex sync.Mutex
-	stopScanning      = false
-)
+const workerCount = 100
 
-func scanPort(ip string, port int, wg *sync.WaitGroup) {
+type UserRequest struct {
+	User   string      `json:"User"`
+	Secret interface{} `json:"Secret,omitempty"` // Allow for different data types for the Secret
+}
+
+func checkPort(portChan chan int, wg *sync.WaitGroup, client *http.Client, user string, secret interface{}) {
 	defer wg.Done()
 
-	target := fmt.Sprintf("%s:%d", ip, port)
-	conn, err := net.DialTimeout("tcp", target, 1*time.Second)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
+	for port := range portChan {
+		address := "10.49.122.144:" + strconv.Itoa(port)
+		conn, err := net.DialTimeout("tcp", address, time.Millisecond*100)
 
-	fmt.Printf("Port %d is open\n", port)
-
-	stopScanningMutex.Lock()
-	if !stopScanning {
-		// If the port is open, send a GET request to register the username
-		respGet, err := http.Get(fmt.Sprintf("http://%s:%d/ping?username=ayoub", ip, port))
 		if err != nil {
-			fmt.Printf("Error making GET request to port %d: %v\n", port, err)
-		} else {
-			respGet.Body.Close()
-			if respGet.StatusCode == http.StatusOK {
-				fmt.Printf("Successfully registered username 'ayoub' on port %d using GET\n", port)
-				stopScanning = true
+			continue
+		}
+		conn.Close()
+
+		baseURL := fmt.Sprintf("http://10.49.122.144:%d", port)
+
+		doPost := func(url string, body []byte) {
+			resp, err := client.Post(url, "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				fmt.Println("Post error:", err)
+				return
 			}
+			defer resp.Body.Close()
+			respBody, _ := ioutil.ReadAll(resp.Body)
+			fmt.Printf("Response from %s: %s\n", url, string(respBody))
 		}
 
-		// If the port is open, send a POST request to register the username
-		respPost, err := http.Post(fmt.Sprintf("http://%s:%d/signup", ip, port), "application/json", strings.NewReader(`{"USER":"ayoub"}`))
-		if err != nil {
-			fmt.Printf("Error making POST request to port %d: %v\n", port, err)
-		} else {
-			respPost.Body.Close()
-			if respPost.StatusCode == http.StatusOK {
-				fmt.Printf("Successfully registered username 'ayoub' on port %d using POST\n", port)
-				stopScanning = true
-			}
-		}
+		signUpURL := baseURL + "/signup"
+		signUpBody, _ := json.Marshal(UserRequest{User: user})
+		doPost(signUpURL, signUpBody)
+
+		checkURL := baseURL + "/check"
+		checkBody, _ := json.Marshal(UserRequest{User: user})
+		doPost(checkURL, checkBody)
+
+		getUserSecretURL := baseURL + "/getUserSecret"
+		getUserSecretBody, _ := json.Marshal(UserRequest{User: user})
+		doPost(getUserSecretURL, getUserSecretBody)
+
+		getUserLevelURL := baseURL + "/getUserLevel"
+		getUserLevelBody, _ := json.Marshal(UserRequest{User: user})
+		doPost(getUserLevelURL, getUserLevelBody)
+
+		getUserPointsURL := baseURL + "/getUserPoints"
+		getUserPointsBody, _ := json.Marshal(UserRequest{User: user})
+		doPost(getUserPointsURL, getUserPointsBody)
+
+		hintURL := baseURL + "/iNeedAHint"
+		hintBody, _ := json.Marshal(UserRequest{User: user, Secret: secret}) // Pass the secret
+		doPost(hintURL, hintBody)
 	}
-	stopScanningMutex.Unlock()
 }
 
 func main() {
-	ip := "10.49.122.144"
-	var wg sync.WaitGroup
-
-	// Scan ports in the range from 1024 to 65535
-	for port := 1024; port <= 65535; port++ {
-		wg.Add(1)
-		go scanPort(ip, port, &wg)
-
-		stopScanningMutex.Lock()
-		if stopScanning {
-			stopScanningMutex.Unlock()
-			break
-		}
-		stopScanningMutex.Unlock()
+	client := &http.Client{
+		Timeout: time.Second * 2,
 	}
 
-	wg.Wait()
+	user := "ayoub"
+	secret := "?" //
+
+	for {
+		var wg sync.WaitGroup
+		portChan := make(chan int, workerCount)
+
+		for i := 0; i < workerCount; i++ {
+			wg.Add(1)
+			go checkPort(portChan, &wg, client, user, secret)
+		}
+
+		for port := 1; port <= 65535; port++ {
+			portChan <- port
+		}
+
+		close(portChan)
+		wg.Wait()
+	}
 }
